@@ -225,18 +225,36 @@ class StreamHandler {
         message: error.message,
         stack: error.stack,
       });
-      this.closeConnection(connectionId, `Target connection error: ${error.message}`);
+      const connection = this.activeConnections.get(connectionId);
+      if (connection) {
+        try {
+          connection.ws.send(JSON.stringify({ error: `Proxy connection failed: ${error.message}` }));
+        } catch (sendError) {
+          console.error(`[WebSocket] Failed to send error message to ${connectionId}:`, sendError);
+        }
+        this.closeConnection(connectionId, `Target connection error: ${error.message}`);
+      }
     });
 
     targetSocket.on('close', (hadError) => {
       console.log(`[Proxy] Target connection closed for ${connectionId} to ${targetAddress}. Had error: ${hadError}`);
-      this.closeConnection(connectionId, 'Target connection closed');
+      if (this.activeConnections.has(connectionId)) {
+        this.closeConnection(connectionId, 'Target connection closed');
+      }
     });
 
     targetSocket.on('timeout', () => {
       console.log(`[Proxy] Target connection timeout for ${connectionId} to ${targetAddress}`);
       targetSocket.destroy();
-      this.closeConnection(connectionId, 'Target connection timeout');
+      const connection = this.activeConnections.get(connectionId);
+      if (connection) {
+        try {
+          connection.ws.send(JSON.stringify({ error: 'Proxy connection failed: Timeout' }));
+        } catch (sendError) {
+          console.error(`[WebSocket] Failed to send error message to ${connectionId}:`, sendError);
+        }
+        this.closeConnection(connectionId, 'Target connection timeout');
+      }
     });
   }
 

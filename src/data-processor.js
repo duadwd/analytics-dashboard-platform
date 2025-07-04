@@ -1,9 +1,11 @@
-const crypto = require('crypto');
+// const crypto = require('crypto'); // No longer needed for parsing
 const config = require('./config');
 
 /**
  * Data Processor
- * Responsible for parsing and processing analytics data streams
+ * Responsible for parsing client data packets to extract target host and port.
+ * This implementation is specifically designed to handle modern proxy protocols
+ * like VLESS, which are commonly used by clients such as V2Ray/Xray.
  */
 class DataProcessor {
   constructor() {
@@ -11,440 +13,111 @@ class DataProcessor {
   }
 
   /**
-   * Parse data packet, detect format type and process accordingly
-   * @param {Buffer} data - Raw data packet
-   * @returns {Object} Processing result
+   * Parses the first data packet from a client to extract the target address and port.
+   * The logic follows the VLESS protocol structure.
+   *
+   * VLESS Request Structure (relevant parts for parsing):
+   * - 1 byte: Version
+   * - 16 bytes: UUID
+   * - 1 byte: Addon Length (N)
+   * - N bytes: Addons
+   * - 1 byte: Command
+   * - 2 bytes: Port (Big Endian)
+   * - 1 byte: Address Type (ATYP)
+   *   - 1: IPv4 (4 bytes)
+   *   - 3: Domain Name (1 byte length + N bytes name)
+   *   - 4: IPv6 (16 bytes)
+   * - M bytes: Address
+   *
+   * @param {Buffer} data - The raw data packet from the client.
+   * @returns {{host: string, port: number} | null} An object with host and port, or null if parsing fails.
    */
   parseDataPacket(data) {
-    if (!Buffer.isBuffer(data) || data.length === 0) {
-      console.error('[Parser] Received invalid data packet (not a buffer or empty).');
-      return { success: false, error: 'Invalid data packet' };
+    // Minimum length check: 1(Ver) + 16(UUID) + 1(AddonLen) + 1(Cmd) + 2(Port) + 1(ATYP) + 1(AddrLen) + 1(Addr) = 24
+    if (!Buffer.isBuffer(data) || data.length < 24) {
+      console.error('[Parser] Invalid data packet: not a buffer or too short for a valid header.');
+      return null;
     }
 
-    console.log(`[Parser] Attempting to parse data packet of size: ${data.length} bytes.`);
-    // Detect data format type
-    const formatType = this.detectDataFormat(data);
-    console.log(`[Parser] Detected format type: ${formatType}`);
-    
-    switch (formatType) {
-      case 'primary':
-        return this.processPrimaryData(data);
-      case 'streaming':
-        return this.processStreamingData(data);
-      default:
-        console.warn(`[Parser] Unknown data format for packet.`);
-        return { success: false, error: 'Unknown data format', data: data };
-    }
-  }
-
-  /**
-   * Detect data format type
-   * @param {Buffer} data - Data buffer
-   * @returns {string} Format type ('primary', 'streaming', 'unknown')
-   */
-  detectDataFormat(data) {
-    if (data.length < 16) {
-      return 'unknown';
-    }
-
-    // Detect primary format: version byte 0, followed by 16-byte identifier
-    if (data[0] === 0 && data.length >= 17) {
-      return 'primary';
-    }
-
-    // Detect streaming format: starts with authentication hash (56-byte hex string)
-    if (data.length >= 56) {
-      const possibleHash = data.slice(0, 56).toString('ascii');
-      // Check if valid hexadecimal string
-      if (/^[a-f0-9]{56}$/i.test(possibleHash)) {
-        return 'streaming';
-      }
-    }
-
-    return 'unknown';
-  }
-
-  /**
-   * Process primary data format
-   * @param {Buffer} data - Raw data
-   * @returns {Object} Processing result
-   */
-  processPrimaryData(data) {
     try {
-      // Primary data format structure processing
-      if (data.length < 16) {
-        return { success: false, error: 'Insufficient primary data length' };
-      }
-
-      let offset = 0;
-      
-      // Parse version (1 byte)
-      const version = data.readUInt8(offset);
-      offset += 1;
-      
-      if (version !== 0) {
-        return { success: false, error: 'Unsupported primary data version' };
-      }
-
-      // Parse identifier (16 bytes)
-      const identifier = data.slice(offset, offset + 16);
-      offset += 16;
-      
-      // Validate identifier
-      const expectedId = this.parseIdentifier(this.config.dataSource.primary.apiKey);
-      if (!identifier.equals(expectedId)) {
-        console.warn(`[Parser-Primary] Authentication failed. Expected ID: ${expectedId.toString('hex')}, Got: ${identifier.toString('hex')}`);
-        return { success: false, error: 'Primary data authentication failed' };
-      }
-
-      // Parse metadata length (1 byte)
-      if (offset >= data.length) {
-        return { success: false, error: 'Incomplete primary data structure' };
-      }
-      
-      const metadataLength = data.readUInt8(offset);
-      offset += 1;
-
-      // Skip metadata
-      offset += metadataLength;
-
-      // Parse command (1 byte)
-      if (offset >= data.length) {
-        return { success: false, error: 'Missing data command' };
-      }
-      
-      const command = data.readUInt8(offset);
-      offset += 1;
-
-      // Parse target address
-      const addressInfo = this.parseAddress(data, offset);
-      if (!addressInfo.success) {
-        return addressInfo;
-      }
-      
-      offset = addressInfo.offset;
-
-      return {
-        success: true,
-        format: 'primary',
-        version,
-        identifier: this.formatIdentifier(identifier),
-        command,
-        target: {
-          type: addressInfo.type,
-          address: addressInfo.address,
-          port: addressInfo.port
-        },
-        payload: data.slice(offset),
-        metadata: {
-          totalLength: data.length,
-          headerLength: offset,
-          payloadLength: data.length - offset
-        }
-      };
-
-    } catch (error) {
-      return {
-        success: false,
-        error: `Primary data processing error: ${error.message}`,
-        stack: error.stack,
-      };
-    }
-  }
-
-  /**
-   * Process streaming data format
-   * @param {Buffer} data - Raw data
-   * @returns {Object} Processing result
-   */
-  processStreamingData(data) {
-    try {
-      // Streaming data format structure processing
-      if (data.length < 56) { // Minimum length: auth hash(56) + command(1) + address info
-        return { success: false, error: 'Insufficient streaming data length' };
-      }
-
       let offset = 0;
 
-      // Parse authentication hash (56 bytes: SHA224 hex string)
-      const authHash = data.slice(offset, offset + 56).toString('ascii');
-      offset += 56;
+      // --- Skip VLESS Header ---
+      // 1. Version (1 byte) + UUID (16 bytes)
+      offset += 17;
 
-      // Validate authentication
-      const expectedHash = crypto
-        .createHash('sha224')
-        .update(this.config.dataSource.streaming.token)
-        .digest('hex');
+      // 2. Addons (variable length)
+      const addonLength = data.readUInt8(offset);
+      offset += 1 + addonLength;
 
-      if (authHash !== expectedHash) {
-        console.warn(`[Parser-Streaming] Authentication failed. Hash mismatch.`);
-        return { success: false, error: 'Streaming data authentication failed' };
-      }
-
-      // Parse separator (2 bytes: \r\n)
-      if (offset + 2 > data.length ||
-          data[offset] !== 0x0D || data[offset + 1] !== 0x0A) {
-        return { success: false, error: 'Invalid streaming data separator' };
-      }
-      offset += 2;
-
-      // Parse command (1 byte)
-      if (offset >= data.length) {
-        return { success: false, error: 'Missing streaming command' };
-      }
-      
-      const command = data.readUInt8(offset);
+      // 3. Command (1 byte)
       offset += 1;
 
-      // Parse target address
-      const addressInfo = this.parseAddress(data, offset);
-      if (!addressInfo.success) {
-        return addressInfo;
+      // --- Parse Target Address ---
+      // Check if there's enough data for Port and ATYP
+      if (data.length < offset + 3) {
+        console.error('[Parser] Packet too short to contain port and address type.');
+        return null;
       }
-      
-      offset = addressInfo.offset;
 
-      // Parse second separator (2 bytes: \r\n)
-      if (offset + 2 > data.length ||
-          data[offset] !== 0x0D || data[offset + 1] !== 0x0A) {
-        return { success: false, error: 'Invalid streaming data second separator' };
-      }
+      // 4. Port (2 bytes, Big Endian)
+      const port = data.readUInt16BE(offset);
       offset += 2;
 
-      return {
-        success: true,
-        format: 'streaming',
-        authHash,
-        command,
-        target: {
-          type: addressInfo.type,
-          address: addressInfo.address,
-          port: addressInfo.port
-        },
-        payload: data.slice(offset),
-        metadata: {
-          totalLength: data.length,
-          headerLength: offset,
-          payloadLength: data.length - offset
-        }
-      };
-
-    } catch (error) {
-      return {
-        success: false,
-        error: `Streaming data processing error: ${error.message}`,
-        stack: error.stack,
-      };
-    }
-  }
-
-  /**
-   * Parse address information
-   * @param {Buffer} data - Data buffer
-   * @param {number} offset - Current offset
-   * @returns {Object} Address parsing result
-   */
-  parseAddress(data, offset) {
-    try {
-      if (offset >= data.length) {
-        return { success: false, error: 'Missing address type' };
-      }
-
+      // 5. Address Type (ATYP)
       const addressType = data.readUInt8(offset);
       offset += 1;
 
-      let address;
-      let type;
+      let host;
 
       switch (addressType) {
-        case 1: // IPv4
-          if (offset + 4 > data.length) {
-            return { success: false, error: 'Incomplete IPv4 address' };
+        case 1: // ATYP = 1: IPv4 Address (4 bytes)
+          if (data.length < offset + 4) {
+            console.error('[Parser] Incomplete IPv4 address data in packet.');
+            return null;
           }
-          address = Array.from(data.slice(offset, offset + 4)).join('.');
-          offset += 4;
-          type = 'ipv4';
+          host = Array.from(data.slice(offset, offset + 4)).join('.');
           break;
 
-        case 3: // Domain
-          if (offset >= data.length) {
-            return { success: false, error: 'Missing domain length' };
+        case 3: // ATYP = 3: Domain Name (1 byte length + N bytes)
+          if (data.length < offset + 1) {
+            console.error('[Parser] Missing domain name length in packet.');
+            return null;
           }
           const domainLength = data.readUInt8(offset);
           offset += 1;
-          
-          if (offset + domainLength > data.length) {
-            return { success: false, error: 'Incomplete domain data' };
+
+          if (data.length < offset + domainLength) {
+            console.error('[Parser] Incomplete domain name data in packet.');
+            return null;
           }
-          address = data.slice(offset, offset + domainLength).toString('utf8');
-          offset += domainLength;
-          type = 'domain';
+          host = data.slice(offset, offset + domainLength).toString('utf8');
           break;
 
-        case 4: // IPv6
-          if (offset + 16 > data.length) {
-            return { success: false, error: 'Incomplete IPv6 address' };
+        case 4: // ATYP = 4: IPv6 Address (16 bytes)
+          if (data.length < offset + 16) {
+            console.error('[Parser] Incomplete IPv6 address data in packet.');
+            return null;
           }
           const ipv6Parts = [];
           for (let i = 0; i < 8; i++) {
             ipv6Parts.push(data.readUInt16BE(offset + i * 2).toString(16));
           }
-          address = ipv6Parts.join(':');
-          offset += 16;
-          type = 'ipv6';
+          host = ipv6Parts.join(':');
           break;
 
         default:
-          return { success: false, error: `Unsupported address type: ${addressType}` };
+          console.error(`[Parser] Unsupported address type encountered: ${addressType}`);
+          return null;
       }
 
-      // Parse port (2 bytes)
-      if (offset + 2 > data.length) {
-        return { success: false, error: 'Incomplete port information' };
-      }
-      
-      const port = data.readUInt16BE(offset);
-      offset += 2;
-
-      return {
-        success: true,
-        type,
-        address,
-        port,
-        offset
-      };
+      console.log(`[Parser] Successfully parsed target address: ${host}:${port}`);
+      return { host, port };
 
     } catch (error) {
-      return {
-        success: false,
-        error: `Address parsing error: ${error.message}`,
-        stack: error.stack,
-      };
+      console.error(`[Parser] An error occurred during packet parsing: ${error.message}`);
+      return null;
     }
-  }
-
-  /**
-   * Parse identifier string to Buffer
-   * @param {string} identifierString - Identifier string
-   * @returns {Buffer} Identifier Buffer
-   */
-  parseIdentifier(identifierString) {
-    const cleanId = identifierString.replace(/-/g, '');
-    return Buffer.from(cleanId, 'hex');
-  }
-
-  /**
-   * Format identifier Buffer to string
-   * @param {Buffer} identifierBuffer - Identifier Buffer
-   * @returns {string} Formatted identifier string
-   */
-  formatIdentifier(identifierBuffer) {
-    const hex = identifierBuffer.toString('hex');
-    return [
-      hex.slice(0, 8),
-      hex.slice(8, 12),
-      hex.slice(12, 16),
-      hex.slice(16, 20),
-      hex.slice(20, 32)
-    ].join('-');
-  }
-
-  /**
-   * Create response data
-   * @param {string} format - Data format type
-   * @param {Object} requestData - Request data
-   * @returns {Buffer} Response data
-   */
-  createResponse(format, requestData) {
-    try {
-      switch (format) {
-        case 'primary':
-          return this.createPrimaryResponse(requestData);
-        case 'streaming':
-          return this.createStreamingResponse(requestData);
-        default:
-          throw new Error(`Unsupported format: ${format}`);
-      }
-    } catch (error) {
-      console.error('[Parser] Response creation failed:', {
-        message: error.message,
-        stack: error.stack,
-      });
-      return Buffer.alloc(0);
-    }
-  }
-
-  /**
-   * Create primary data response
-   * @param {Object} requestData - Request data
-   * @returns {Buffer} Primary response data
-   */
-  createPrimaryResponse(requestData) {
-    // Primary response structure: version(1) + metadata length(1) + metadata(N) + command(1)
-    const response = Buffer.alloc(3);
-    let offset = 0;
-
-    // Version
-    response.writeUInt8(0, offset);
-    offset += 1;
-
-    // Metadata length (currently 0)
-    response.writeUInt8(0, offset);
-    offset += 1;
-
-    // Command response (0 indicates success)
-    response.writeUInt8(0, offset);
-
-    return response;
-  }
-
-  /**
-   * Create streaming data response
-   * @param {Object} requestData - Request data
-   * @returns {Buffer} Streaming response data
-   */
-  createStreamingResponse(requestData) {
-    // Streaming format typically doesn't need special response headers
-    return Buffer.alloc(0);
-  }
-
-  /**
-   * Validate data format integrity
-   * @param {string} format - Data format type
-   * @param {Buffer} data - Data
-   * @returns {boolean} Whether valid
-   */
-  validateDataFormat(format, data) {
-    if (!Buffer.isBuffer(data) || data.length === 0) {
-      return false;
-    }
-
-    switch (format) {
-      case 'primary':
-        return data.length >= 18; // Minimum primary data length
-      case 'streaming':
-        return data.length >= 59; // Minimum streaming data length
-      default:
-        return false;
-    }
-  }
-
-  /**
-   * Get data processing statistics
-   * @returns {Object} Statistics information
-   */
-  getProtocolStats() {
-    return {
-      supportedFormats: ['primary', 'streaming'],
-      primaryConfig: {
-        version: 0,
-        apiKey: this.config.dataSource.primary.apiKey,
-        format: this.config.dataSource.primary.format
-      },
-      streamingConfig: {
-        hasToken: !!this.config.dataSource.streaming.token
-      }
-    };
   }
 }
 
