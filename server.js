@@ -72,18 +72,15 @@ app.get('/api/processor/stats', (req, res) => {
 
 // 手动处理 WebSocket 升级请求
 server.on('upgrade', (request, socket, head) => {
-  const pathname = url.parse(request.url).pathname;
-  console.log(`[Upgrade] Attempting to upgrade connection for path: ${pathname}`);
-
-  // 只有当请求路径匹配我们定义的代理路径时，才处理WebSocket升级
+  console.log(`[Server] Received WebSocket upgrade request for URL: ${request.url}`);
+  const { pathname } = new URL(request.url, `http://${request.headers.host}`);
+  
   if (pathname === PROXY_WEBSOCKET_PATH) {
     wss.handleUpgrade(request, socket, head, (ws) => {
-      // 升级成功后，触发 'connection' 事件
       wss.emit('connection', ws, request);
     });
   } else {
-    // 如果路径不匹配，拒绝连接
-    console.log(`[Upgrade] Denying connection for path: ${pathname}. Destroying socket.`);
+    console.log(`[Server] WebSocket upgrade rejected for path: ${pathname}`);
     socket.destroy();
   }
 });
