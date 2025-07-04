@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: analytics-platform
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        fromService:
+          type: web
+          name: analytics-platform
+          property: port
+    healthCheckPath: /
+    regions:
+      - oregon
+    scaling:
+      minInstances: 1
+      maxInstances: 1
