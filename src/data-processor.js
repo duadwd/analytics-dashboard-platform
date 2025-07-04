@@ -139,6 +139,13 @@ class DataProcessor {
       const command = data.readUInt8(offset);
       offset += 1;
 
+      // VLESS spec: Port is before Address
+      if (offset + 2 > data.length) {
+        return { success: false, error: 'Incomplete port information for primary data' };
+      }
+      const port = data.readUInt16BE(offset);
+      offset += 2;
+
       // Parse target address
       const addressInfo = this.parseAddress(data, offset);
       if (!addressInfo.success) {
@@ -156,7 +163,7 @@ class DataProcessor {
         target: {
           type: addressInfo.type,
           address: addressInfo.address,
-          port: addressInfo.port
+          port: port // Use the correctly parsed port
         },
         payload: data.slice(offset),
         metadata: {
@@ -318,19 +325,12 @@ class DataProcessor {
           return { success: false, error: `Unsupported address type: ${addressType}` };
       }
 
-      // Parse port (2 bytes)
-      if (offset + 2 > data.length) {
-        return { success: false, error: 'Incomplete port information' };
-      }
-      
-      const port = data.readUInt16BE(offset);
-      offset += 2;
-
+      // Port is now parsed before this function is called for VLESS
       return {
         success: true,
         type,
         address,
-        port,
+        // port is removed from here
         offset
       };
 

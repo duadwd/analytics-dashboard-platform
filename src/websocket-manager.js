@@ -88,12 +88,18 @@ class StreamHandler {
 
     // 延迟发送初始数据，避免与订阅确认冲突
     setTimeout(() => {
-      console.log(`=== 📤 发送初始Dashboard数据 ===`);
-      console.log(`连接ID: ${connectionId}`);
-      console.log(`延迟时间: 1000ms`);
-      console.log(`当前时间: ${Date.now()}`);
-      this.sendDashboardData(connectionId);
-      console.log('==============================');
+      const connection = this.activeConnections.get(connectionId);
+      // 确保在发送前连接仍处于仪表板模式
+      if (connection && connection.stage === 'dashboard') {
+        console.log(`=== 📤 发送初始Dashboard数据 ===`);
+        console.log(`连接ID: ${connectionId}`);
+        console.log(`延迟时间: 1000ms`);
+        console.log(`当前时间: ${Date.now()}`);
+        this.sendDashboardData(connectionId);
+        console.log('==============================');
+      } else {
+        console.log(`⚠️ 已切换到代理模式 (${connection?.stage})，取消发送初始Dashboard数据`);
+      }
     }, 1000);
     
     // Set periodic sending
