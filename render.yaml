@@ -13,7 +13,7 @@ services:
           type: web
           name: analytics-platform
           property: port
-    healthCheckPath: /health
+    healthCheckPath: /
     regions:
       - oregon
     scaling:
