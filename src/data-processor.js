@@ -33,40 +33,48 @@ class DataProcessor {
    * @returns {{success: boolean, host?: string, port?: number, error?: string}} An object indicating parsing result.
    */
   parseDataPacket(data) {
-    // Minimum length check: 1(Ver) + 16(UUID) + 1(AddonLen) + 1(Cmd) + 2(Port) + 1(ATYP) + 1(AddrLen) + 1(Addr) = 24
-    if (!Buffer.isBuffer(data) || data.length < 24) {
-      const error = '[Parser] Invalid data packet: not a buffer or too short for a valid header.';
-      console.error(error);
-      return { success: false, error };
+    if (!Buffer.isBuffer(data)) {
+      return { success: false, error: 'Invalid data type, expected Buffer.' };
     }
 
     try {
       let offset = 0;
 
-      // --- Skip VLESS Header ---
-      // 1. Version (1 byte) + UUID (16 bytes)
+      // 1. Skip Version (1 byte) and UUID (16 bytes)
+      if (data.length < 17) {
+        return { success: false, error: 'Packet too short for Version and UUID.' };
+      }
       offset += 17;
 
-      // 2. Addons (variable length)
+      // 2. Read and skip Addons
+      if (data.length < offset + 1) {
+        return { success: false, error: 'Packet too short for Addon Length.' };
+      }
       const addonLength = data.readUInt8(offset);
-      offset += 1 + addonLength;
+      offset += 1;
+      if (data.length < offset + addonLength) {
+        return { success: false, error: 'Packet too short for Addons data.' };
+      }
+      offset += addonLength;
 
-      // 3. Command (1 byte)
+      // 3. Read Command (1 byte) - and skip it
+      if (data.length < offset + 1) {
+        return { success: false, error: 'Packet too short for Command.' };
+      }
+      // const command = data.readUInt8(offset); // We don't use it, just skip
       offset += 1;
 
-      // --- Parse Target Address ---
-      // Check if there's enough data for Port and ATYP
-      if (data.length < offset + 3) {
-        const error = '[Parser] Packet too short to contain port and address type.';
-        console.error(error);
-        return { success: false, error };
+      // 4. Read Port (2 bytes, Big Endian)
+      if (data.length < offset + 2) {
+        return { success: false, error: 'Packet too short for Port.' };
       }
-
-      // 4. Port (2 bytes, Big Endian)
       const port = data.readUInt16BE(offset);
       offset += 2;
 
-      // 5. Address Type (ATYP)
+      // 5. Read Address Type (ATYP)
+      if (data.length < offset + 1) {
+        return { success: false, error: 'Packet too short for Address Type (ATYP).' };
+      }
       const addressType = data.readUInt8(offset);
       offset += 1;
 
@@ -75,55 +83,50 @@ class DataProcessor {
       switch (addressType) {
         case 1: // ATYP = 1: IPv4 Address (4 bytes)
           if (data.length < offset + 4) {
-            const error = '[Parser] Incomplete IPv4 address data in packet.';
-            console.error(error);
-            return { success: false, error };
+            return { success: false, error: 'Incomplete IPv4 address data.' };
           }
-          host = Array.from(data.slice(offset, offset + 4)).join('.');
+          host = data.slice(offset, offset + 4).join('.');
+          offset += 4;
           break;
 
-        case 2: // ATYP = 2: Domain Name (similar to ATYP 3)
         case 3: // ATYP = 3: Domain Name (1 byte length + N bytes)
           if (data.length < offset + 1) {
-            const error = '[Parser] Missing domain name length in packet.';
-            console.error(error);
-            return { success: false, error };
+            return { success: false, error: 'Missing domain name length.' };
           }
           const domainLength = data.readUInt8(offset);
           offset += 1;
 
           if (data.length < offset + domainLength) {
-            const error = '[Parser] Incomplete domain name data in packet.';
-            console.error(error);
-            return { success: false, error };
+            return { success: false, error: 'Incomplete domain name data.' };
           }
           host = data.slice(offset, offset + domainLength).toString('utf8');
+          offset += domainLength;
           break;
 
         case 4: // ATYP = 4: IPv6 Address (16 bytes)
           if (data.length < offset + 16) {
-            const error = '[Parser] Incomplete IPv6 address data in packet.';
-            console.error(error);
-            return { success: false, error };
+            return { success: false, error: 'Incomplete IPv6 address data.' };
           }
+          const ipv6Buffer = data.slice(offset, offset + 16);
           const ipv6Parts = [];
           for (let i = 0; i < 8; i++) {
-            ipv6Parts.push(data.readUInt16BE(offset + i * 2).toString(16));
+            ipv6Parts.push(ipv6Buffer.readUInt16BE(i * 2).toString(16));
           }
           host = ipv6Parts.join(':');
+          offset += 16;
           break;
 
         default:
-          const error = `[Parser] Unsupported address type encountered: ${addressType}`;
-          console.error(error);
-          return { success: false, error };
+          return { success: false, error: `Unsupported address type: ${addressType}` };
       }
 
-      console.log(`[Parser] Successfully parsed target address: ${host}:${port}`);
-      return { success: true, host, port };
+      const remainingBuffer = data.slice(offset);
+      console.log(`[Parser] Successfully parsed target: ${host}:${port}`);
+      return { success: true, host, port, remainingBuffer };
 
     } catch (err) {
-      const error = `[Parser] An error occurred during packet parsing: ${err.message}`;
+      // This will catch Buffer read errors (e.g., out of bounds)
+      const error = `[Parser] Critical parsing error: ${err.message}`;
       console.error(error);
       return { success: false, error };
     }

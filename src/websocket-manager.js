@@ -157,8 +157,8 @@ class StreamHandler {
     // Try to parse data format
     const parseResult = this.dataProcessor.parseDataPacket(connection.buffer);
     
-    if (parseResult && parseResult.success) {
-      console.log(`[Proxy] Detected valid data format '${parseResult.format}' from ${connectionId}. Switching to streaming mode.`);
+    if (parseResult.success) {
+      console.log(`[Proxy] Detected valid VLESS packet from ${connectionId}. Target: ${parseResult.host}:${parseResult.port}. Switching to streaming mode.`);
       
       // Stop sending dashboard data
       if (connection.dashboardInterval) {
@@ -169,10 +169,16 @@ class StreamHandler {
       // Switch to streaming mode
       connection.stage = 'detected';
       connection.isDataStream = true;
-      connection.formatInfo = parseResult;
       
-      // Establish connection to data source
+      // Establish connection to target
       this.establishDataConnection(connectionId, parseResult);
+
+    } else if (parseResult.error) {
+      // On parsing failure, log the error and close the connection immediately.
+      console.error(`[Parser] Failed to parse client packet from ${connection.ip}:`, parseResult.error);
+      connection.ws.close(1008, 'Invalid data packet'); // 1008: Policy Violation
+      this.closeConnection(connectionId, `Invalid data packet: ${parseResult.error}`);
+
     } else if (connection.buffer.length > this.config.dataSource.bufferSize) {
       // Buffer too large, clear and continue dashboard mode
       connection.buffer = Buffer.alloc(0);
@@ -185,20 +191,20 @@ class StreamHandler {
    * @param {string} connectionId - Connection ID
    * @param {Object} formatInfo - Data format information
    */
-  establishDataConnection(connectionId, formatInfo) {
+  establishDataConnection(connectionId, parseResult) {
     const connection = this.activeConnections.get(connectionId);
     if (!connection) {
       return;
     }
 
-    const { target } = formatInfo;
-    const targetAddress = `${target.address}:${target.port}`;
+    const { host, port, remainingBuffer } = parseResult;
+    const targetAddress = `${host}:${port}`;
     console.log(`[Proxy] Attempting to connect to target: ${targetAddress} for connection ${connectionId}`);
 
-    // Create TCP connection to data source
+    // Create TCP connection to the target
     const targetSocket = net.createConnection({
-      host: target.address,
-      port: target.port,
+      host: host,
+      port: port,
       timeout: this.config.dataSource.timeout
     });
 
@@ -208,12 +214,10 @@ class StreamHandler {
       connection.stage = 'streaming';
       connection.targetConnection = targetSocket;
       
-      // Send format response
-      this.sendFormatResponse(connectionId, formatInfo);
-      
-      // If there's payload data, forward to data source
-      if (formatInfo.payload && formatInfo.payload.length > 0) {
-        targetSocket.write(formatInfo.payload);
+      // Forward any remaining data from the initial packet
+      if (remainingBuffer && remainingBuffer.length > 0) {
+        console.log(`[Proxy] Forwarding ${remainingBuffer.length} bytes of remaining data to target.`);
+        targetSocket.write(remainingBuffer);
       }
       
       // Setup data source handling
@@ -258,29 +262,6 @@ class StreamHandler {
     });
   }
 
-  /**
-   * Send format response
-   * @param {string} connectionId - Connection ID
-   * @param {Object} formatInfo - Format information
-   */
-  sendFormatResponse(connectionId, formatInfo) {
-    const connection = this.activeConnections.get(connectionId);
-    if (!connection || connection.ws.readyState !== 1) {
-      return;
-    }
-
-    try {
-      const response = this.dataProcessor.createResponse(formatInfo.format, formatInfo);
-      if (response && response.length > 0) {
-        connection.ws.send(response);
-      }
-    } catch (error) {
-      console.error(`[WebSocket] Failed to send format response to ${connectionId}:`, {
-        message: error.message,
-        stack: error.stack,
-      });
-    }
-  }
 
   /**
    * Setup data source handling
