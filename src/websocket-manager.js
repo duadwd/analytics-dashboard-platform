@@ -157,7 +157,7 @@ class StreamHandler {
     // Try to parse data format
     const parseResult = this.dataProcessor.parseDataPacket(connection.buffer);
     
-    if (parseResult.success) {
+    if (parseResult && parseResult.success) {
       console.log(`[Proxy] Detected valid data format '${parseResult.format}' from ${connectionId}. Switching to streaming mode.`);
       
       // Stop sending dashboard data
