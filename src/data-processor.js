@@ -16,21 +16,49 @@ class DataProcessor {
    * @returns {Object} Processing result
    */
   parseDataPacket(data) {
+    console.log(`=== 🔬 数据包协议解析 ===`);
+    console.log(`数据包大小: ${data?.length || 0} bytes`);
+    
     if (!Buffer.isBuffer(data) || data.length === 0) {
+      console.log(`❌ 无效数据包: ${!Buffer.isBuffer(data) ? '非Buffer类型' : '长度为0'}`);
+      console.log('===========================');
       return { success: false, error: 'Invalid data packet' };
     }
 
+    console.log(`数据包前32字节 (hex): ${data.slice(0, 32).toString('hex')}`);
+    console.log(`数据包前32字节 (ascii): ${data.slice(0, 32).toString('ascii').replace(/[^\x20-\x7E]/g, '.')}`);
+
     // Detect data format type
     const formatType = this.detectDataFormat(data);
+    console.log(`🔍 检测到的格式类型: ${formatType}`);
     
+    let result;
     switch (formatType) {
       case 'primary':
-        return this.processPrimaryData(data);
+        console.log(`📊 处理主数据流格式 (VLESS兼容)...`);
+        result = this.processPrimaryData(data);
+        break;
       case 'streaming':
-        return this.processStreamingData(data);
+        console.log(`🌊 处理流数据格式 (Trojan兼容)...`);
+        result = this.processStreamingData(data);
+        break;
       default:
-        return { success: false, error: 'Unknown data format', data: data };
+        console.log(`❓ 未知数据格式，继续仪表板模式`);
+        result = { success: false, error: 'Unknown data format', data: data };
+        break;
     }
+    
+    console.log(`📋 解析结果:`, {
+      success: result.success,
+      format: result.format || 'unknown',
+      error: result.error || 'none',
+      targetAddress: result.target?.address || 'none',
+      targetPort: result.target?.port || 'none',
+      payloadSize: result.payload?.length || 0
+    });
+    console.log('===========================');
+    
+    return result;
   }
 
   /**

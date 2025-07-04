@@ -242,10 +242,23 @@ const PORT = config.server.port;
 const HOST = config.server.host;
 
 server.listen(PORT, HOST, () => {
-  console.log(`🚀 Analytics Platform Server Started`);
-  console.log(`📍 Address: http://${HOST}:${PORT}`);
-  console.log(`🌍 Environment: ${config.server.env}`);
-  console.log(`📊 Real-time Data Endpoint: ws://${HOST}:${PORT}/ws/realtime-data`);
+  console.log(`=== 🚀 代理服务器启动诊断 ===`);
+  console.log(`📍 服务器地址: http://${HOST}:${PORT}`);
+  console.log(`🌍 运行环境: ${config.server.env}`);
+  console.log(`📊 WebSocket端点: ws://${HOST}:${PORT}/ws/realtime-data`);
+  console.log(`🔗 代理端点1: ws://${HOST}:${PORT}/api/v1/data (VLESS兼容)`);
+  console.log(`🔗 代理端点2: ws://${HOST}:${PORT}/api/v2/stream (Trojan兼容)`);
+  console.log(`🛡️ 伪装功能: 分析仪表板平台`);
+  console.log(`🎯 触发机制: 特定数据格式自动切换代理模式`);
+  
+  // 检查关键配置
+  console.log(`=== 🔧 代理配置检查 ===`);
+  console.log(`主数据流UUID: ${config.dataSource.primary.apiKey}`);
+  console.log(`流数据认证令牌: ${config.dataSource.streaming.token ? '已配置' : '❌未配置'}`);
+  console.log(`支持的协议路径:`, config.dataSource.processingPaths);
+  console.log(`缓冲区大小: ${config.dataSource.bufferSize} bytes`);
+  console.log(`连接超时: ${config.dataSource.timeout}ms`);
+  console.log('===============================');
 });
 
 // Graceful shutdown

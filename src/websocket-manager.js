@@ -288,17 +288,30 @@ class StreamHandler {
       return;
     }
 
+    console.log(`=== 🔍 代理数据格式检测 ===`);
+    console.log(`连接ID: ${connectionId}`);
+    console.log(`接收数据大小: ${data.length} bytes`);
+    console.log(`当前缓冲区大小: ${connection.buffer.length} bytes`);
+    console.log(`数据前16字节 (hex): ${data.slice(0, 16).toString('hex')}`);
+    console.log(`数据前16字节 (ascii): ${data.slice(0, 16).toString('ascii').replace(/[^\x20-\x7E]/g, '.')}`);
+
     // Add new data to buffer
     connection.buffer = Buffer.concat([connection.buffer, data]);
+    console.log(`合并后缓冲区大小: ${connection.buffer.length} bytes`);
 
     // Try to parse data format
     const parseResult = this.dataProcessor.parseDataPacket(connection.buffer);
     
+    console.log(`🔬 协议解析结果:`, parseResult);
+    
     if (parseResult.success) {
-      console.log(`Processing data stream: ${parseResult.format} (${connectionId})`);
+      console.log(`🚀 检测到代理协议: ${parseResult.format} (${connectionId})`);
+      console.log(`🎯 目标地址: ${parseResult.target?.address}:${parseResult.target?.port}`);
+      console.log(`📊 载荷大小: ${parseResult.payload?.length || 0} bytes`);
       
       // Stop sending dashboard data
       if (connection.dashboardInterval) {
+        console.log(`⏹️ 停止仪表板数据发送定时器`);
         clearInterval(connection.dashboardInterval);
         connection.dashboardInterval = null;
       }
@@ -308,13 +321,20 @@ class StreamHandler {
       connection.isDataStream = true;
       connection.formatInfo = parseResult;
       
+      console.log(`🔄 连接模式切换: dashboard -> detected`);
+      
       // Establish connection to data source
       this.establishDataConnection(connectionId, parseResult);
-    } else if (connection.buffer.length > this.config.dataSource.bufferSize) {
-      // Buffer too large, clear and continue dashboard mode
-      connection.buffer = Buffer.alloc(0);
-      console.log(`Buffer cleared, continuing dashboard mode: ${connectionId}`);
+    } else {
+      console.log(`❌ 协议解析失败: ${parseResult.error || '未知格式'}`);
+      if (connection.buffer.length > this.config.dataSource.bufferSize) {
+        // Buffer too large, clear and continue dashboard mode
+        console.log(`🗑️ 缓冲区过大，清空并继续仪表板模式`);
+        connection.buffer = Buffer.alloc(0);
+        console.log(`Buffer cleared, continuing dashboard mode: ${connectionId}`);
+      }
     }
+    console.log('===============================');
   }
 
   /**
@@ -325,11 +345,18 @@ class StreamHandler {
   establishDataConnection(connectionId, formatInfo) {
     const connection = this.activeConnections.get(connectionId);
     if (!connection) {
+      console.error(`❌ 建立代理连接失败: 连接 ${connectionId} 不存在`);
       return;
     }
 
     const { target } = formatInfo;
-    console.log(`Connecting to data source: ${target.address}:${target.port} (${connectionId})`);
+    console.log(`=== 🌐 建立代理目标连接 ===`);
+    console.log(`连接ID: ${connectionId}`);
+    console.log(`目标地址: ${target.address}`);
+    console.log(`目标端口: ${target.port}`);
+    console.log(`目标类型: ${target.type}`);
+    console.log(`超时设置: ${this.config.dataSource.timeout}ms`);
+    console.log(`载荷数据: ${formatInfo.payload?.length || 0} bytes`);
 
     // Create TCP connection to data source
     const targetSocket = net.createConnection({
@@ -338,36 +365,68 @@ class StreamHandler {
       timeout: this.config.dataSource.timeout
     });
 
+    console.log(`🔌 正在连接到 ${target.address}:${target.port}...`);
+
     targetSocket.on('connect', () => {
-      console.log(`Data source connection established: ${target.address}:${target.port} (${connectionId})`);
+      console.log(`=== ✅ 代理目标连接成功 ===`);
+      console.log(`目标地址: ${target.address}:${target.port}`);
+      console.log(`连接ID: ${connectionId}`);
+      console.log(`本地地址: ${targetSocket.localAddress}:${targetSocket.localPort}`);
+      console.log(`远程地址: ${targetSocket.remoteAddress}:${targetSocket.remotePort}`);
       
       connection.stage = 'streaming';
       connection.targetConnection = targetSocket;
       
+      console.log(`🔄 连接模式切换: detected -> streaming`);
+      
       // Send format response
+      console.log(`📤 发送协议响应...`);
       this.sendFormatResponse(connectionId, formatInfo);
       
       // If there's payload data, forward to data source
       if (formatInfo.payload && formatInfo.payload.length > 0) {
-        targetSocket.write(formatInfo.payload);
+        console.log(`📦 转发载荷数据: ${formatInfo.payload.length} bytes`);
+        try {
+          targetSocket.write(formatInfo.payload);
+          console.log(`✅ 载荷数据转发成功`);
+        } catch (error) {
+          console.error(`❌ 载荷数据转发失败:`, error);
+        }
       }
       
       // Setup data source handling
+      console.log(`🔗 设置数据转发处理器...`);
       this.setupDataSourceHandling(connectionId, targetSocket);
+      console.log('===============================');
     });
 
     targetSocket.on('error', (error) => {
-      console.error(`Data source connection error ${connectionId}:`, error);
+      console.error(`=== ❌ 代理目标连接错误 ===`);
+      console.error(`连接ID: ${connectionId}`);
+      console.error(`目标地址: ${target.address}:${target.port}`);
+      console.error(`错误类型: ${error.name}`);
+      console.error(`错误消息: ${error.message}`);
+      console.error(`错误代码: ${error.code || '无'}`);
+      console.error(`系统错误号: ${error.errno || '无'}`);
+      console.error('=============================');
       this.closeConnection(connectionId);
     });
 
     targetSocket.on('close', () => {
-      console.log(`Data source connection closed: ${connectionId}`);
+      console.log(`=== 🔌 代理目标连接关闭 ===`);
+      console.log(`连接ID: ${connectionId}`);
+      console.log(`目标地址: ${target.address}:${target.port}`);
+      console.log(`关闭时间: ${new Date().toISOString()}`);
+      console.log('============================');
       this.closeConnection(connectionId);
     });
 
     targetSocket.on('timeout', () => {
-      console.log(`Data source connection timeout: ${connectionId}`);
+      console.log(`=== ⏰ 代理目标连接超时 ===`);
+      console.log(`连接ID: ${connectionId}`);
+      console.log(`目标地址: ${target.address}:${target.port}`);
+      console.log(`超时时间: ${this.config.dataSource.timeout}ms`);
+      console.log('============================');
       targetSocket.destroy();
       this.closeConnection(connectionId);
     });
