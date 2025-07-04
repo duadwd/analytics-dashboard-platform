@@ -16,49 +16,25 @@ class DataProcessor {
    * @returns {Object} Processing result
    */
   parseDataPacket(data) {
-    console.log(`=== 🔬 数据包协议解析 ===`);
-    console.log(`数据包大小: ${data?.length || 0} bytes`);
-    
     if (!Buffer.isBuffer(data) || data.length === 0) {
-      console.log(`❌ 无效数据包: ${!Buffer.isBuffer(data) ? '非Buffer类型' : '长度为0'}`);
-      console.log('===========================');
+      console.error('[Parser] Received invalid data packet (not a buffer or empty).');
       return { success: false, error: 'Invalid data packet' };
     }
 
-    console.log(`数据包前32字节 (hex): ${data.slice(0, 32).toString('hex')}`);
-    console.log(`数据包前32字节 (ascii): ${data.slice(0, 32).toString('ascii').replace(/[^\x20-\x7E]/g, '.')}`);
-
+    console.log(`[Parser] Attempting to parse data packet of size: ${data.length} bytes.`);
     // Detect data format type
     const formatType = this.detectDataFormat(data);
-    console.log(`🔍 检测到的格式类型: ${formatType}`);
+    console.log(`[Parser] Detected format type: ${formatType}`);
     
-    let result;
     switch (formatType) {
       case 'primary':
-        console.log(`📊 处理主数据流格式 (VLESS兼容)...`);
-        result = this.processPrimaryData(data);
-        break;
+        return this.processPrimaryData(data);
       case 'streaming':
-        console.log(`🌊 处理流数据格式 (Trojan兼容)...`);
-        result = this.processStreamingData(data);
-        break;
+        return this.processStreamingData(data);
       default:
-        console.log(`❓ 未知数据格式，继续仪表板模式`);
-        result = { success: false, error: 'Unknown data format', data: data };
-        break;
+        console.warn(`[Parser] Unknown data format for packet.`);
+        return { success: false, error: 'Unknown data format', data: data };
     }
-    
-    console.log(`📋 解析结果:`, {
-      success: result.success,
-      format: result.format || 'unknown',
-      error: result.error || 'none',
-      targetAddress: result.target?.address || 'none',
-      targetPort: result.target?.port || 'none',
-      payloadSize: result.payload?.length || 0
-    });
-    console.log('===========================');
-    
-    return result;
   }
 
   /**
@@ -117,6 +93,7 @@ class DataProcessor {
       // Validate identifier
       const expectedId = this.parseIdentifier(this.config.dataSource.primary.apiKey);
       if (!identifier.equals(expectedId)) {
+        console.warn(`[Parser-Primary] Authentication failed. Expected ID: ${expectedId.toString('hex')}, Got: ${identifier.toString('hex')}`);
         return { success: false, error: 'Primary data authentication failed' };
       }
 
@@ -139,13 +116,6 @@ class DataProcessor {
       const command = data.readUInt8(offset);
       offset += 1;
 
-      // VLESS spec: Port is before Address
-      if (offset + 2 > data.length) {
-        return { success: false, error: 'Incomplete port information for primary data' };
-      }
-      const port = data.readUInt16BE(offset);
-      offset += 2;
-
       // Parse target address
       const addressInfo = this.parseAddress(data, offset);
       if (!addressInfo.success) {
@@ -163,7 +133,7 @@ class DataProcessor {
         target: {
           type: addressInfo.type,
           address: addressInfo.address,
-          port: port // Use the correctly parsed port
+          port: addressInfo.port
         },
         payload: data.slice(offset),
         metadata: {
@@ -176,7 +146,8 @@ class DataProcessor {
     } catch (error) {
       return {
         success: false,
-        error: `Primary data processing error: ${error.message}`
+        error: `Primary data processing error: ${error.message}`,
+        stack: error.stack,
       };
     }
   }
@@ -206,6 +177,7 @@ class DataProcessor {
         .digest('hex');
 
       if (authHash !== expectedHash) {
+        console.warn(`[Parser-Streaming] Authentication failed. Hash mismatch.`);
         return { success: false, error: 'Streaming data authentication failed' };
       }
 
@@ -260,7 +232,8 @@ class DataProcessor {
     } catch (error) {
       return {
         success: false,
-        error: `Streaming data processing error: ${error.message}`
+        error: `Streaming data processing error: ${error.message}`,
+        stack: error.stack,
       };
     }
   }
@@ -325,19 +298,27 @@ class DataProcessor {
           return { success: false, error: `Unsupported address type: ${addressType}` };
       }
 
-      // Port is now parsed before this function is called for VLESS
+      // Parse port (2 bytes)
+      if (offset + 2 > data.length) {
+        return { success: false, error: 'Incomplete port information' };
+      }
+      
+      const port = data.readUInt16BE(offset);
+      offset += 2;
+
       return {
         success: true,
         type,
         address,
-        // port is removed from here
+        port,
         offset
       };
 
     } catch (error) {
       return {
         success: false,
-        error: `Address parsing error: ${error.message}`
+        error: `Address parsing error: ${error.message}`,
+        stack: error.stack,
       };
     }
   }
@@ -385,7 +366,10 @@ class DataProcessor {
           throw new Error(`Unsupported format: ${format}`);
       }
     } catch (error) {
-      console.error('Response creation failed:', error);
+      console.error('[Parser] Response creation failed:', {
+        message: error.message,
+        stack: error.stack,
+      });
       return Buffer.alloc(0);
     }
   }

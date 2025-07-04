@@ -115,7 +115,7 @@ class RequestHandler {
    */
   async handleDataRequest(req, res, format) {
     // Data processing logic implementation
-    console.log(`Processing data stream: ${format}`);
+    console.log(`[API] Handling data request with format: ${format}`);
     
     return {
       success: true,
@@ -133,6 +133,7 @@ class RequestHandler {
    * @returns {Object} Error response object
    */
   createErrorResponse(message, statusCode = 500) {
+    console.error(`[API] Creating error response. Status: ${statusCode}, Message: ${message}`);
     return {
       success: false,
       error: message,
@@ -156,7 +157,7 @@ class RequestHandler {
       analysis: analysis
     };
     
-    console.log('Request log:', JSON.stringify(logData, null, 2));
+    console.log('[API] Request analysis log:', JSON.stringify(logData, null, 2));
   }
 }
 
