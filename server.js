@@ -17,8 +17,11 @@ const server = http.createServer(app);
 const streamHandler = new StreamHandler();
 const dataProcessor = new DataProcessor();
 
-// Create WebSocket server for real-time data
-const wss = new WebSocket.Server({ server });
+// Create WebSocket server for real-time data with path filtering
+const wss = new WebSocket.Server({
+  server,
+  path: '/ws/realtime-data' // 明确指定 WebSocket 路径
+});
 
 // Middleware configuration
 app.use(helmet(config.security.helmet));
@@ -32,12 +35,23 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({
+  console.log('=== 健康检查请求 ===');
+  console.log(`请求来源IP: ${req.ip}`);
+  console.log(`User-Agent: ${req.get('User-Agent')}`);
+  console.log(`活跃WebSocket连接数: ${streamHandler.getConnectionStats().total}`);
+  console.log('=================');
+  
+  const healthData = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    version: '1.0.0'
-  });
+    version: '1.0.0',
+    connections: streamHandler.getConnectionStats().total,
+    environment: config.server.env,
+    port: config.server.port
+  };
+  
+  res.json(healthData);
 });
 
 // Root path - return dashboard interface
@@ -110,10 +124,39 @@ app.use('/api/v2/stream', (req, res) => {
 
 // WebSocket connection handling for real-time analytics
 wss.on('connection', (ws, req) => {
+  // 添加详细的连接诊断日志
+  console.log('=== WebSocket 连接诊断 ===');
+  console.log(`请求URL: ${req.url}`);
+  console.log(`请求头 Upgrade: ${req.headers.upgrade}`);
+  console.log(`请求头 Connection: ${req.headers.connection}`);
+  console.log(`客户端IP: ${req.ip || req.connection.remoteAddress}`);
+  console.log(`User-Agent: ${req.headers['user-agent']}`);
+  console.log('=============================');
+  
   // Use stream handler to process dashboard connections
   const connectionId = streamHandler.handleChartConnection(ws, req);
   
   console.log(`Analytics client connected: ${connectionId}`);
+  
+  // 添加 WebSocket 状态监控
+  ws.on('close', (code, reason) => {
+    console.log(`=== WebSocket 断开诊断 ===`);
+    console.log(`连接ID: ${connectionId}`);
+    console.log(`断开代码: ${code}`);
+    console.log(`断开原因: ${reason}`);
+    console.log(`连接持续时间: ${Date.now() - ws.connectTime}ms`);
+    console.log('============================');
+  });
+  
+  ws.on('error', (error) => {
+    console.log(`=== WebSocket 错误诊断 ===`);
+    console.log(`连接ID: ${connectionId}`);
+    console.log(`错误详情:`, error);
+    console.log('===========================');
+  });
+  
+  // 记录连接时间
+  ws.connectTime = Date.now();
 });
 
 // Connection statistics endpoint

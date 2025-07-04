@@ -39,7 +39,14 @@ class StreamHandler {
 
     this.activeConnections.set(connectionId, connectionInfo);
     
+    console.log(`=== WebSocket Manager 连接处理 ===`);
+    console.log(`连接ID: ${connectionId}`);
+    console.log(`客户端IP: ${connectionInfo.ip}`);
+    console.log(`WebSocket 状态: ${ws.readyState}`);
+    console.log(`请求URL: ${req.url}`);
+    console.log(`活跃连接数: ${this.activeConnections.size}`);
     console.log(`New analytics connection established: ${connectionId} (${connectionInfo.ip})`);
+    console.log('=================================');
     
     // Start sending dashboard data
     this.startDashboardDataSending(connectionId);
@@ -120,7 +127,48 @@ class StreamHandler {
       return;
     }
 
-    // Convert data to Buffer
+    console.log(`=== 收到客户端消息 ===`);
+    console.log(`连接ID: ${connectionId}`);
+    console.log(`消息大小: ${data.length} bytes`);
+    console.log(`连接阶段: ${connection.stage}`);
+
+    // 首先尝试解析JSON消息（如ping/pong、订阅消息等）
+    try {
+      const message = JSON.parse(data.toString());
+      console.log(`JSON消息类型: ${message.type || 'unknown'}`);
+      console.log(`JSON消息内容:`, message);
+
+      // 处理ping消息
+      if (message.type === 'ping') {
+        const pongMessage = {
+          type: 'pong',
+          timestamp: message.timestamp,
+          serverTime: Date.now()
+        };
+        connection.ws.send(JSON.stringify(pongMessage));
+        console.log(`发送pong响应: ${JSON.stringify(pongMessage)}`);
+        console.log('====================');
+        return;
+      }
+
+      // 处理订阅消息
+      if (message.action === 'subscribe') {
+        console.log(`处理订阅请求: ${message.channel}`);
+        const response = {
+          type: 'subscription_confirmed',
+          channel: message.channel,
+          timestamp: Date.now()
+        };
+        connection.ws.send(JSON.stringify(response));
+        console.log(`发送订阅确认: ${JSON.stringify(response)}`);
+        console.log('====================');
+        return;
+      }
+    } catch (e) {
+      console.log(`非JSON消息，尝试二进制处理: ${e.message}`);
+    }
+
+    // Convert data to Buffer for binary processing
     const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
     
     if (connection.stage === 'dashboard') {
@@ -130,6 +178,7 @@ class StreamHandler {
       // In streaming mode, forward data to target server
       this.forwardDataToTarget(connectionId, buffer);
     }
+    console.log('====================');
   }
 
   /**
