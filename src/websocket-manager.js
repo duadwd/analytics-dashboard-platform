@@ -79,17 +79,42 @@ class StreamHandler {
       return;
     }
 
-    // Send initial dashboard data
-    this.sendDashboardData(connectionId);
+    console.log(`=== 🚀 开始Dashboard数据发送 ===`);
+    console.log(`连接ID: ${connectionId}`);
+    console.log(`WebSocket状态: ${connection.ws.readyState}`);
+    console.log(`更新间隔: ${this.config.dashboard.updateInterval}ms`);
+    console.log(`当前时间: ${Date.now()}`);
+    console.log('===============================');
+
+    // 延迟发送初始数据，避免与订阅确认冲突
+    setTimeout(() => {
+      console.log(`=== 📤 发送初始Dashboard数据 ===`);
+      console.log(`连接ID: ${connectionId}`);
+      console.log(`延迟时间: 1000ms`);
+      console.log(`当前时间: ${Date.now()}`);
+      this.sendDashboardData(connectionId);
+      console.log('==============================');
+    }, 1000);
     
     // Set periodic sending
     connection.dashboardInterval = setInterval(() => {
+      console.log(`=== ⏰ 定时器触发Dashboard发送 ===`);
+      console.log(`连接ID: ${connectionId}`);
+      console.log(`WebSocket状态: ${connection.ws.readyState}`);
+      console.log(`连接阶段: ${connection.stage}`);
+      console.log(`当前时间: ${Date.now()}`);
+      
       if (connection.stage === 'dashboard' && connection.ws.readyState === 1) {
         this.sendDashboardData(connectionId);
       } else {
+        console.log(`⚠️ 清理定时器 - 状态: ${connection.stage}, WebSocket: ${connection.ws.readyState}`);
         clearInterval(connection.dashboardInterval);
       }
+      console.log('================================');
     }, this.config.dashboard.updateInterval);
+    
+    // 记录定时器创建
+    console.log(`✅ Dashboard定时器已创建 (间隔: ${this.config.dashboard.updateInterval}ms)`);
   }
 
   /**
@@ -98,11 +123,29 @@ class StreamHandler {
    */
   sendDashboardData(connectionId) {
     const connection = this.activeConnections.get(connectionId);
-    if (!connection || connection.ws.readyState !== 1) {
+    
+    console.log(`=== 📊 Dashboard数据发送检查 ===`);
+    console.log(`连接ID: ${connectionId}`);
+    console.log(`连接存在: ${!!connection}`);
+    
+    if (!connection) {
+      console.log(`❌ 连接不存在，跳过发送`);
+      console.log('==============================');
+      return;
+    }
+    
+    console.log(`WebSocket状态: ${connection.ws.readyState} (1=OPEN)`);
+    console.log(`连接阶段: ${connection.stage}`);
+    console.log(`发送前时间戳: ${Date.now()}`);
+    
+    if (connection.ws.readyState !== 1) {
+      console.log(`❌ WebSocket未开启，跳过发送`);
+      console.log('==============================');
       return;
     }
 
     try {
+      const beforeSend = Date.now();
       const dashboardData = this.dashboardGenerator.generateDashboardData();
       const message = JSON.stringify({
         type: 'dashboard_update',
@@ -110,10 +153,29 @@ class StreamHandler {
         timestamp: new Date().toISOString()
       });
       
+      console.log(`消息大小: ${message.length} bytes`);
+      console.log(`消息类型: dashboard_update`);
+      
+      // 检查WebSocket缓冲区
+      if (connection.ws.bufferedAmount > 0) {
+        console.log(`⚠️ WebSocket缓冲区有数据: ${connection.ws.bufferedAmount} bytes`);
+      }
+      
       connection.ws.send(message);
+      const afterSend = Date.now();
+      
+      console.log(`✅ Dashboard数据发送成功`);
+      console.log(`发送耗时: ${afterSend - beforeSend}ms`);
+      console.log(`发送后缓冲区: ${connection.ws.bufferedAmount} bytes`);
+      console.log(`发送后WebSocket状态: ${connection.ws.readyState}`);
+      
     } catch (error) {
-      console.error(`Dashboard data sending failed ${connectionId}:`, error);
+      console.error(`❌ Dashboard数据发送失败 ${connectionId}:`, error);
+      console.error(`错误类型: ${error.name}`);
+      console.error(`错误消息: ${error.message}`);
+      console.error(`错误堆栈:`, error.stack);
     }
+    console.log('==============================');
   }
 
   /**
@@ -140,27 +202,61 @@ class StreamHandler {
 
       // 处理ping消息
       if (message.type === 'ping') {
+        const beforePong = Date.now();
+        console.log(`🏓 收到ping消息，准备发送pong`);
+        console.log(`ping时间戳: ${message.timestamp}`);
+        console.log(`WebSocket缓冲区: ${connection.ws.bufferedAmount} bytes`);
+        
         const pongMessage = {
           type: 'pong',
           timestamp: message.timestamp,
-          serverTime: Date.now()
+          serverTime: beforePong
         };
-        connection.ws.send(JSON.stringify(pongMessage));
-        console.log(`发送pong响应: ${JSON.stringify(pongMessage)}`);
+        
+        try {
+          connection.ws.send(JSON.stringify(pongMessage));
+          const afterPong = Date.now();
+          console.log(`✅ pong发送成功: ${JSON.stringify(pongMessage)}`);
+          console.log(`pong发送耗时: ${afterPong - beforePong}ms`);
+          console.log(`发送后缓冲区: ${connection.ws.bufferedAmount} bytes`);
+          console.log(`发送后WebSocket状态: ${connection.ws.readyState}`);
+        } catch (error) {
+          console.error(`❌ pong发送失败:`, error);
+        }
         console.log('====================');
         return;
       }
 
       // 处理订阅消息
       if (message.action === 'subscribe') {
-        console.log(`处理订阅请求: ${message.channel}`);
+        const beforeSubscription = Date.now();
+        console.log(`📺 处理订阅请求: ${message.channel}`);
+        console.log(`订阅前WebSocket状态: ${connection.ws.readyState}`);
+        console.log(`订阅前缓冲区: ${connection.ws.bufferedAmount} bytes`);
+        
         const response = {
           type: 'subscription_confirmed',
           channel: message.channel,
-          timestamp: Date.now()
+          timestamp: beforeSubscription
         };
-        connection.ws.send(JSON.stringify(response));
-        console.log(`发送订阅确认: ${JSON.stringify(response)}`);
+        
+        try {
+          connection.ws.send(JSON.stringify(response));
+          const afterSubscription = Date.now();
+          console.log(`✅ 订阅确认发送成功: ${JSON.stringify(response)}`);
+          console.log(`订阅确认发送耗时: ${afterSubscription - beforeSubscription}ms`);
+          console.log(`发送后缓冲区: ${connection.ws.bufferedAmount} bytes`);
+          console.log(`发送后WebSocket状态: ${connection.ws.readyState}`);
+          
+          // 🚨 关键诊断：检查订阅确认后是否会立即触发其他操作
+          console.log(`⚠️ 订阅确认发送完成，连接状态检查:`);
+          console.log(`- 连接阶段: ${connection.stage}`);
+          console.log(`- Dashboard定时器存在: ${!!connection.dashboardInterval}`);
+          console.log(`- 将要开始Dashboard数据流...`);
+          
+        } catch (error) {
+          console.error(`❌ 订阅确认发送失败:`, error);
+        }
         console.log('====================');
         return;
       }

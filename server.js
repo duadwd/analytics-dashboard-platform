@@ -140,19 +140,60 @@ wss.on('connection', (ws, req) => {
   
   // 添加 WebSocket 状态监控
   ws.on('close', (code, reason) => {
-    console.log(`=== WebSocket 断开诊断 ===`);
-    console.log(`连接ID: ${connectionId}`);
-    console.log(`断开代码: ${code}`);
-    console.log(`断开原因: ${reason}`);
-    console.log(`连接持续时间: ${Date.now() - ws.connectTime}ms`);
-    console.log('============================');
+    const duration = Date.now() - ws.connectTime;
+    console.log(`=== 🔌 服务器端WebSocket断开诊断 ===`);
+    console.log(`🆔 连接ID: ${connectionId}`);
+    console.log(`🕐 断开时间: ${new Date().toISOString()}`);
+    console.log(`⏱️ 连接持续时间: ${duration}ms`);
+    console.log(`🔢 断开代码: ${code}`);
+    console.log(`📝 断开原因: ${reason || '无原因'}`);
+    console.log(`📊 WebSocket最终状态: ${ws.readyState}`);
+    console.log(`📦 缓冲区剩余: ${ws.bufferedAmount || 0} bytes`);
+    
+    // 连接持续时间分析
+    if (duration < 3000) {
+      console.log(`🚨 短连接警告: 连接仅持续${duration}ms，可能存在问题`);
+    }
+    
+    // 断开代码分析
+    const serverCloseReasons = {
+      1000: '正常关闭',
+      1001: '🚨 服务器主动关闭 - 可能的原因：资源不足、错误处理、消息过载',
+      1002: '协议错误',
+      1003: '数据类型不支持',
+      1005: '无状态码',
+      1006: '异常关闭',
+      1011: '服务器内部错误'
+    };
+    
+    console.log(`📋 断开原因分析: ${serverCloseReasons[code] || '未知原因'}`);
+    
+    if (code === 1001) {
+      console.log(`🚨 关键问题识别：代码1001表明服务器主动关闭连接`);
+      console.log(`🔍 需要检查的服务器端问题：`);
+      console.log(`  - 消息发送频率过高`);
+      console.log(`  - 定时器任务冲突`);
+      console.log(`  - 错误处理逻辑`);
+      console.log(`  - 内存或资源限制`);
+    }
+    
+    // 获取连接统计
+    const stats = streamHandler.getConnectionStats();
+    console.log(`📈 当前连接统计: 总计${stats.total}, 活跃${stats.dashboard}, 流式${stats.streaming}`);
+    console.log('=========================================');
   });
   
   ws.on('error', (error) => {
-    console.log(`=== WebSocket 错误诊断 ===`);
-    console.log(`连接ID: ${connectionId}`);
-    console.log(`错误详情:`, error);
-    console.log('===========================');
+    console.log(`=== ❌ 服务器端WebSocket错误诊断 ===`);
+    console.log(`🆔 连接ID: ${connectionId}`);
+    console.log(`🕐 错误时间: ${new Date().toISOString()}`);
+    console.log(`⏱️ 连接运行时间: ${Date.now() - ws.connectTime}ms`);
+    console.log(`📊 WebSocket状态: ${ws.readyState}`);
+    console.log(`❌ 错误类型: ${error.name}`);
+    console.log(`📝 错误消息: ${error.message}`);
+    console.log(`📦 错误代码: ${error.code || '无'}`);
+    console.log(`🔍 错误堆栈:`, error.stack);
+    console.log('=====================================');
   });
   
   // 记录连接时间
