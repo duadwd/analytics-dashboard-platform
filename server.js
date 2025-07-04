@@ -5,34 +5,38 @@ const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
+const url = require('url'); // 引入URL模块
 const config = require('./src/config');
 const StreamHandler = require('./src/websocket-manager');
 const DataProcessor = require('./src/data-processor');
 
-// Create Express application
+// 定义代理WebSocket的特定路径
+const PROXY_WEBSOCKET_PATH = '/ws/realtime-data';
+
+// 创建 Express 应用和 HTTP 服务器
 const app = express();
 const server = http.createServer(app);
 
-// Create core analytics processors
+// 创建核心分析处理器
 const streamHandler = new StreamHandler();
 const dataProcessor = new DataProcessor();
 
-// Create WebSocket server for real-time data
-const wss = new WebSocket.Server({ server });
+// 创建 WebSocket 服务器，但不立即附加到HTTP服务器
+// noServer: true 允许我们手动处理升级请求
+const wss = new WebSocket.Server({ noServer: true });
 
-// Middleware configuration
+// 中间件配置
 app.use(helmet(config.security.helmet));
 app.use(cors(config.security.cors));
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Static file serving
+// 静态文件服务
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Health check endpoint
+// 健康检查端点
 app.get('/health', (req, res) => {
-  console.log(`[HTTP] Received request for ${req.method} ${req.url}`);
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -41,90 +45,12 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Root path - return dashboard interface
+// 根路径 - 返回仪表盘界面
 app.get('/', (req, res) => {
-  console.log(`[HTTP] Received request for ${req.method} ${req.url}`);
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Analytics API endpoint
-app.use('/api/v1/data', (req, res) => {
-  console.log(`[HTTP] Received request for ${req.method} ${req.url}`);
-  // Check for WebSocket upgrade request
-  if (req.headers.upgrade === 'websocket') {
-    console.log(`[HTTP] WebSocket upgrade request detected for ${req.url}`);
-    // WebSocket upgrade handled by wss
-    return;
-  }
-  
-  // Regular HTTP request returns analytics data
-  const mockData = {
-    timestamp: new Date().toISOString(),
-    metrics: {
-      cpu: Math.random() * 100,
-      memory: Math.random() * 100,
-      disk: Math.random() * 100
-    },
-    analytics: {
-      visitors: Math.floor(Math.random() * 1000),
-      pageViews: Math.floor(Math.random() * 5000),
-      bounceRate: Math.random() * 0.5
-    }
-  };
-  
-  res.json(mockData);
-});
-
-// Real-time streaming API endpoint
-app.use('/api/v2/stream', (req, res) => {
-  console.log(`[HTTP] Received request for ${req.method} ${req.url}`);
-  // Check for WebSocket upgrade request
-  if (req.headers.upgrade === 'websocket') {
-    console.log(`[HTTP] WebSocket upgrade request detected for ${req.url}`);
-    // WebSocket upgrade handled by wss
-    return;
-  }
-  
-  // Regular HTTP request returns SSE stream
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*'
-  });
-  
-  let counter = 0;
-  const interval = setInterval(() => {
-    const data = {
-      id: counter++,
-      timestamp: new Date().toISOString(),
-      value: Math.random() * 1000
-    };
-    
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-    
-    if (counter > 10) {
-      clearInterval(interval);
-      res.end();
-    }
-  }, 1000);
-  
-  req.on('close', () => {
-    clearInterval(interval);
-  });
-});
-
-// WebSocket connection handling for real-time analytics
-wss.on('connection', (ws, req) => {
-  const clientIp = req.socket.remoteAddress;
-  console.log(`[WebSocket] New client connection attempt from ${clientIp}. Upgrading to WebSocket...`);
-  // Use stream handler to process dashboard connections
-  const connectionId = streamHandler.handleChartConnection(ws, req);
-  
-  console.log(`[WebSocket] Successfully established connection: ${connectionId}`);
-});
-
-// Connection statistics endpoint
+// 连接统计端点
 app.get('/api/connections/stats', (req, res) => {
   const stats = streamHandler.getConnectionStats();
   res.json({
@@ -134,7 +60,7 @@ app.get('/api/connections/stats', (req, res) => {
   });
 });
 
-// Data processing statistics endpoint
+// 数据处理统计端点
 app.get('/api/processor/stats', (req, res) => {
   const stats = dataProcessor.getProtocolStats();
   res.json({
@@ -144,7 +70,36 @@ app.get('/api/processor/stats', (req, res) => {
   });
 });
 
-// Error handling middleware
+// 手动处理 WebSocket 升级请求
+server.on('upgrade', (request, socket, head) => {
+  const pathname = url.parse(request.url).pathname;
+  console.log(`[Upgrade] Attempting to upgrade connection for path: ${pathname}`);
+
+  // 只有当请求路径匹配我们定义的代理路径时，才处理WebSocket升级
+  if (pathname === PROXY_WEBSOCKET_PATH) {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      // 升级成功后，触发 'connection' 事件
+      wss.emit('connection', ws, request);
+    });
+  } else {
+    // 如果路径不匹配，拒绝连接
+    console.log(`[Upgrade] Denying connection for path: ${pathname}. Destroying socket.`);
+    socket.destroy();
+  }
+});
+
+// WebSocket 连接处理逻辑
+wss.on('connection', (ws, req) => {
+  const clientIp = req.socket.remoteAddress;
+  console.log(`[WebSocket] New client connection from ${clientIp} for path ${req.url}`);
+  
+  // 使用 streamHandler 处理已验证的图表连接
+  const connectionId = streamHandler.handleChartConnection(ws, req);
+  console.log(`[WebSocket] Successfully established connection: ${connectionId}`);
+});
+
+
+// 错误处理中间件
 app.use((err, req, res, next) => {
   console.error('[ERROR] Unhandled server error:', {
     message: err.message,
@@ -158,7 +113,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 404 handler
+// 404 处理器
 app.use((req, res) => {
   res.status(404).json({
     error: 'Resource not found',
@@ -166,7 +121,7 @@ app.use((req, res) => {
   });
 });
 
-// Start analytics server
+// 启动分析服务器
 const PORT = config.server.port;
 const HOST = config.server.host;
 
@@ -174,10 +129,10 @@ server.listen(PORT, HOST, () => {
   console.log(`[Server] 🚀 Analytics Platform Server Started Successfully`);
   console.log(`[Server] Listening on: http://${HOST}:${PORT}`);
   console.log(`[Server] Environment: ${config.server.env}`);
-  console.log(`[Server] Real-time Data Endpoint: ws://${HOST}:${PORT}`);
+  console.log(`[Server] Real-time Data Endpoint: ws://${HOST}:${PORT}${PROXY_WEBSOCKET_PATH}`);
 });
 
-// Graceful shutdown
+// 优雅关机
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM signal, starting graceful shutdown...');
   server.close(() => {
